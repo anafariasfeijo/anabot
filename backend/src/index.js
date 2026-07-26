@@ -1,10 +1,12 @@
 const express = require('express');
+const cors = require('cors');
 const config = require('./config/env');
 const webhookRoutes = require('./routes/webhook');
 const leadsRoutes = require('./routes/leads');
 const { iniciarAgendador } = require('./services/agendador');
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
 app.get('/', (req, res) => {

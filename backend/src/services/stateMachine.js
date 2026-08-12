@@ -1,11 +1,12 @@
 const { getLeadByTelefone, updateLead } = require('../db/leadsRepository');
 const { getMensagem } = require('../db/fluxosRepository');
 const { salvarMensagem } = require('../db/mensagensRepository');
+const { estaPausado } = require('./disparoService');
 const EvolutionApiProvider = require('../integrations/whatsapp/EvolutionApiProvider');
 
 const provider = new EvolutionApiProvider();
 const MAX_MENSAGENS_BOT = 6;
-const DEBOUNCE_MS = 60000; // espera 1 minuto após a última mensagem antes de responder
+const DEBOUNCE_MS = 60000;
 
 const filasPorTelefone = new Map();
 const buffersPorTelefone = new Map();
@@ -110,6 +111,11 @@ async function processarMensagemInterna(telefone, textoCliente, whatsappMessageI
     whatsappMessageId,
   });
 
+  if (estaPausado()) {
+    console.log(`Bot está pausado, mensagem de ${telefone} salva mas sem resposta.`);
+    return;
+  }
+
   if (
     lead.estado === 'aguardando_atendimento_humano' ||
     lead.estado === 'encerrado_sem_interesse'
@@ -125,74 +131,27 @@ async function processarMensagemInterna(telefone, textoCliente, whatsappMessageI
 
   const intencao = classificarResposta(textoCliente);
 
-  // PASSO 0: respondeu ao "Olá, tudo bem?" -> manda pergunta de nicho (passo 1)
-  if (lead.passo_atual === 0) {
-    if (intencao === 'negativo') {
-      await enviarEncerramentoNegativo(lead);
-      return;
-    }
-
-    const mensagem = await getMensagem(lead.nicho, 1);
-    if (!mensagem) {
-      console.log(`Sem mensagem configurada pra nicho "${lead.nicho}" passo 1.`);
-      await enviarHandoff(lead);
-      return;
-    }
-
-    const texto = montarTexto(mensagem, lead);
-    await enviarResposta(lead, texto);
-
-    await updateLead(lead.id, {
-      passo_atual: 1,
-      estado: 'em_qualificacao',
-      contador_mensagens_bot: lead.contador_mensagens_bot + 1,
-    });
+  if (intencao === 'negativo') {
+    await enviarEncerramentoNegativo(lead);
     return;
   }
 
-  // PASSO 1: respondeu se "aceita falar"
-  if (lead.passo_atual === 1) {
-    if (intencao === 'negativo') {
-      await enviarEncerramentoNegativo(lead);
-      return;
-    }
+  const proximoPasso = lead.passo_atual + 1;
+  const mensagem = await getMensagem(lead.nicho, proximoPasso);
 
-    if (intencao === 'indefinido') {
-      // resposta ambígua, melhor deixar humano decidir do que arriscar avançar errado
-      await enviarHandoff(lead);
-      return;
-    }
-
-    const mensagem = await getMensagem(lead.nicho, 2);
-    if (!mensagem) {
-      console.log(`Sem mensagem configurada pra nicho "${lead.nicho}" passo 2.`);
-      await enviarHandoff(lead);
-      return;
-    }
-
-    const texto = montarTexto(mensagem, lead);
-    await enviarResposta(lead, texto);
-
-    await updateLead(lead.id, {
-      passo_atual: 2,
-      estado: 'em_qualificacao',
-      contador_mensagens_bot: lead.contador_mensagens_bot + 1,
-    });
-    return;
-  }
-
-  // PASSO 2: respondeu se "aceita ver" -> se positivo/indefinido, handoff
-  if (lead.passo_atual === 2) {
-    if (intencao === 'negativo') {
-      await enviarEncerramentoNegativo(lead);
-      return;
-    }
-
+  if (!mensagem) {
     await enviarHandoff(lead);
     return;
   }
 
-  await enviarHandoff(lead);
+  const texto = montarTexto(mensagem, lead);
+  await enviarResposta(lead, texto);
+
+  await updateLead(lead.id, {
+    passo_atual: proximoPasso,
+    estado: 'em_qualificacao',
+    contador_mensagens_bot: lead.contador_mensagens_bot + 1,
+  });
 }
 
 function enfileirarProcessamento(telefone, textoCliente, whatsappMessageId) {
@@ -208,8 +167,6 @@ function enfileirarProcessamento(telefone, textoCliente, whatsappMessageId) {
   return filaAtual;
 }
 
-// Junta várias mensagens seguidas da mesma pessoa numa só, esperando DEBOUNCE_MS
-// de silêncio antes de processar — evita responder no meio de uma sequência de mensagens
 async function processarMensagemRecebida(telefone, textoCliente, whatsappMessageId) {
   let buffer = buffersPorTelefone.get(telefone);
 

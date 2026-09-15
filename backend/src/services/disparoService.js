@@ -8,6 +8,27 @@ const provider = new EvolutionApiProvider();
 const LIMITE_DIARIO = 20; // ajuste conforme for aumentando o volume com segurança
 const DELAY_ENTRE_ENVIOS_MS = 30000; // 30 segundos entre cada disparo, pra não parecer robô
 
+let pausado = false;
+let disparoEmAndamento = false;
+
+function pausarDisparo() {
+  pausado = true;
+  console.log('[Disparo] Pausa solicitada — vai parar após o lead atual.');
+}
+
+function retomarDisparo() {
+  pausado = false;
+  console.log('[Disparo] Retomado.');
+}
+
+function estaPausado() {
+  return pausado;
+}
+
+function estaEmAndamento() {
+  return disparoEmAndamento;
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -38,42 +59,85 @@ async function buscarLeadsNovos(limite) {
   return data;
 }
 
+function montarTexto(mensagem, lead) {
+  if (lead.nome && mensagem.texto_com_nome) {
+    return mensagem.texto_com_nome.replace('{empresa}', lead.nome);
+  }
+  return mensagem.texto_sem_nome;
+}
+
 async function dispararPrimeiroContato() {
-  const jaEnviadosHoje = await contarEnviosHoje();
-  const vagasRestantes = LIMITE_DIARIO - jaEnviadosHoje;
-
-  if (vagasRestantes <= 0) {
-    console.log('Limite diário de disparos atingido. Nenhum envio agora.');
+  if (disparoEmAndamento) {
+    console.log('Já existe um disparo em andamento, ignorando nova chamada.');
     return;
   }
 
-  const leads = await buscarLeadsNovos(vagasRestantes);
+  disparoEmAndamento = true;
+  pausado = false; // toda nova chamada de disparo começa "despausada"
 
-  if (leads.length === 0) {
-    console.log('Nenhum lead novo pra disparar.');
-    return;
-  }
+  try {
+    const jaEnviadosHoje = await contarEnviosHoje();
+    const vagasRestantes = LIMITE_DIARIO - jaEnviadosHoje;
 
-  console.log(`Disparando primeiro contato para ${leads.length} lead(s)...`);
-
-  const abertura = await getMensagem('geral', 0);
-  const textoAbertura = abertura?.texto_sem_nome || 'Oi! 😊 Tudo bem?';
-
-  for (const lead of leads) {
-    try {
-      await provider.sendMessage(lead.telefone, textoAbertura);
-      await updateLead(lead.id, {
-        estado: 'primeiro_contato_enviado',
-        passo_atual: 0,
-        contador_mensagens_bot: 1,
-      });
-      console.log(`Primeiro contato enviado para lead ${lead.id} (${lead.telefone})`);
-    } catch (error) {
-      console.error(`Falha ao enviar para lead ${lead.id}:`, error.message);
+    if (vagasRestantes <= 0) {
+      console.log(`[Disparo] Limite diário de ${LIMITE_DIARIO} já atingido hoje.`);
+      return;
     }
 
-    await delay(DELAY_ENTRE_ENVIOS_MS);
+    const leads = await buscarLeadsNovos(vagasRestantes);
+
+    if (leads.length === 0) {
+      console.log('[Disparo] Nenhum lead novo pra disparar.');
+      return;
+    }
+
+    console.log(`[Disparo] Iniciando envio pra ${leads.length} leads.`);
+
+    for (const lead of leads) {
+      if (pausado) {
+        console.log('[Disparo] Pausado pelo usuário, parando aqui.');
+        break;
+      }
+
+      try {
+        const mensagem = await getMensagem(lead.nicho, 0);
+        if (!mensagem) {
+          console.log(`[Disparo] Sem mensagem configurada pra nicho "${lead.nicho}" passo 0, pulando lead ${lead.id}.`);
+          continue;
+        }
+
+        const texto = montarTexto(mensagem, lead);
+
+        await provider.sendPresence(lead.telefone, 3000);
+        await delay(3000);
+        await provider.sendMessage(lead.telefone, texto);
+
+        await updateLead(lead.id, {
+          estado: 'primeiro_contato_enviado',
+          passo_atual: 0,
+          contador_mensagens_bot: 1,
+        });
+
+        console.log(`[Disparo] Mensagem enviada pro lead ${lead.id} (${lead.telefone}).`);
+      } catch (error) {
+        console.error(`[Disparo] Erro ao enviar pro lead ${lead.id}:`, error);
+      }
+
+      await delay(DELAY_ENTRE_ENVIOS_MS);
+    }
+
+    console.log('[Disparo] Finalizado.');
+  } catch (error) {
+    console.error('[Disparo] Erro geral:', error);
+  } finally {
+    disparoEmAndamento = false;
   }
 }
 
-module.exports = { dispararPrimeiroContato };
+module.exports = {
+  dispararPrimeiroContato,
+  pausarDisparo,
+  retomarDisparo,
+  estaPausado,
+  estaEmAndamento,
+};

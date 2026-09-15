@@ -4,7 +4,7 @@ const { parse } = require('csv-parse/sync');
 const XLSX = require('xlsx');
 const supabase = require('../db/supabaseClient');
 
-const NICHOS_VALIDOS = ['salao_beleza', 'barbearia', 'clinica', 'academia', 'loja_roupas', 'restaurante'];
+const NICHOS_VALIDOS = ['salao_beleza', 'barbearia', 'manicure', 'clinica', 'academia', 'loja_roupas', 'restaurante', 'advogado'];
 
 function normalizarTelefone(valor) {
   if (!valor) return null;

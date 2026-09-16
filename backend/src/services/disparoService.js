@@ -133,13 +133,8 @@ async function dispararPrimeiroContato() {
       }
 
       try {
-        const mensagem = await getMensagem(lead.nicho, 0);
-        if (!mensagem) {
-          console.log(`[Disparo] Sem mensagem configurada pra nicho "${lead.nicho}" passo 0, pulando lead ${lead.id}.`);
-          continue;
-        }
-
-        const texto = montarTexto(mensagem, lead);
+        const saudacao = getSaudacao();
+        const texto = `${saudacao}! Tudo bem?`;
 
         await provider.sendPresence(lead.telefone, 3000);
         await delay(3000);

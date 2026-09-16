@@ -70,4 +70,15 @@ router.get('/status-disparo', (req, res) => {
   });
 });
 
+// Rotas usadas pelo painel Lovable pra ligar/desligar o bot
+router.post('/bot/ligar', (req, res) => {
+  retomarDisparo();
+  res.json({ status: 'ok', mensagem: 'Bot ligado.' });
+});
+
+router.post('/bot/desligar', (req, res) => {
+  pausarDisparo();
+  res.json({ status: 'ok', mensagem: 'Bot desligado.' });
+});
+
 module.exports = router;

@@ -1,6 +1,7 @@
 const { getLeadByTelefone, updateLead } = require('../db/leadsRepository');
 const { getMensagem } = require('../db/fluxosRepository');
 const { salvarMensagem } = require('../db/mensagensRepository');
+const { estaPausado } = require('./disparoService');
 const EvolutionApiProvider = require('../integrations/whatsapp/EvolutionApiProvider');
 
 const provider = new EvolutionApiProvider();
@@ -153,6 +154,11 @@ async function processarMensagemInterna(telefone, textoCliente, whatsappMessageI
     whatsappMessageId,
   });
 
+  if (estaPausado()) {
+    console.log(`Bot está pausado, mensagem de ${telefone} salva mas sem resposta.`);
+    return;
+  }
+
   if (
     lead.estado === 'aguardando_atendimento_humano' ||
     lead.estado === 'encerrado_sem_interesse'
@@ -253,6 +259,27 @@ function enfileirarProcessamento(telefone, textoCliente, whatsappMessageId) {
 
   filasPorTelefone.set(telefone, filaAtual);
   return filaAtual;
+}
+
+async function processarMensagemRecebida(telefone, textoCliente, whatsappMessageId) {
+  let buffer = buffersPorTelefone.get(telefone);
+
+  if (!buffer) {
+    buffer = { mensagens: [], timer: null, ultimoMessageId: null };
+    buffersPorTelefone.set(telefone, buffer);
+  }
+
+  buffer.mensagens.push(textoCliente);
+  buffer.ultimoMessageId = whatsappMessageId;
+
+  if (buffer.timer) clearTimeout(buffer.timer);
+
+  buffer.timer = setTimeout(() => {
+    const textoCombinado = buffer.mensagens.join(' ');
+    const messageId = buffer.ultimoMessageId;
+    buffersPorTelefone.delete(telefone);
+    enfileirarProcessamento(telefone, textoCombinado, messageId);
+  }, DEBOUNCE_MS);
 }
 
 async function processarMensagemRecebida(telefone, textoCliente, whatsappMessageId) {

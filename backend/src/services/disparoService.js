@@ -1,24 +1,57 @@
 const supabase = require('../db/supabaseClient');
 const { getMensagem } = require('../db/fluxosRepository');
 const { updateLead } = require('../db/leadsRepository');
+const { getSaudacao } = require('../utils/saudacao');
 const EvolutionApiProvider = require('../integrations/whatsapp/EvolutionApiProvider');
 
 const provider = new EvolutionApiProvider();
 
-const LIMITE_DIARIO = 20; // ajuste conforme for aumentando o volume com segurança
-const DELAY_ENTRE_ENVIOS_MS = 30000; // 30 segundos entre cada disparo, pra não parecer robô
+const LIMITE_DIARIO = 20;
+const DELAY_ENTRE_ENVIOS_MS = 30000;
 
 let pausado = false;
 let disparoEmAndamento = false;
 
-function pausarDisparo() {
-  pausado = true;
-  console.log('[Disparo] Pausa solicitada — vai parar após o lead atual.');
+async function carregarEstadoInicial() {
+  try {
+    const { data, error } = await supabase
+      .from('configuracoes')
+      .select('valor')
+      .eq('chave', 'bot_pausado')
+      .single();
+
+    if (error) throw error;
+    pausado = data?.valor === 'true';
+    console.log(`[Bot] Estado carregado do Supabase: ${pausado ? 'DESLIGADO' : 'LIGADO'}`);
+  } catch (error) {
+    console.error('[Bot] Não foi possível carregar estado salvo, iniciando como LIGADO por padrão:', error.message);
+    pausado = false;
+  }
 }
 
-function retomarDisparo() {
+carregarEstadoInicial();
+
+async function salvarEstado(novoPausado) {
+  const { error } = await supabase
+    .from('configuracoes')
+    .update({ valor: String(novoPausado), atualizado_em: new Date().toISOString() })
+    .eq('chave', 'bot_pausado');
+
+  if (error) {
+    console.error('[Bot] Erro ao salvar estado no Supabase:', error.message);
+  }
+}
+
+async function pausarDisparo() {
+  pausado = true;
+  await salvarEstado(true);
+  console.log('[Bot] Desligado — disparos e respostas automáticas pausados.');
+}
+
+async function retomarDisparo() {
   pausado = false;
-  console.log('[Disparo] Retomado.');
+  await salvarEstado(false);
+  console.log('[Bot] Ligado — disparos e respostas automáticas retomados.');
 }
 
 function estaPausado() {
